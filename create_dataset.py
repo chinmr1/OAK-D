@@ -13,6 +13,7 @@ NUM_IMAGES_TO_GENERATE = 10000 # Adjust as needed, but be mindful of storage and
 IMG_SIZE = 640
 
 SOURCE_CUBES_DIR = os.path.join('.', 'Alpha_Cube_Cropped') # This should contain your cropped cube PNGs with alpha channel
+VAL_SOURCE_CUBES_DIR = os.path.join('.', 'Alpha_Cube_Cropped_Val') # Optional: use a different cube source for validation
 BG_DIR = os.path.join('.', 'Background')
 bg_files = glob.glob(os.path.join(BG_DIR, '*.[jp][pn][g]')) # Grabs .jpg, .png, .jpeg
 if not bg_files:
@@ -51,9 +52,19 @@ global_transform = A.Compose([
     ], p=0.8)
 ])
 
-# Load all cube PNGs
-cube_files = [os.path.join(SOURCE_CUBES_DIR, f) for f in os.listdir(SOURCE_CUBES_DIR) if f.endswith('.png')]
-cubes = [Image.open(f).convert("RGBA") for f in cube_files]
+def load_cubes(cube_dir):
+    cube_files = [os.path.join(cube_dir, f) for f in os.listdir(cube_dir) if f.endswith('.png')]
+    if not cube_files:
+        raise ValueError(f"No cube PNGs found in {cube_dir}. Check your path.")
+    return [Image.open(f).convert("RGBA") for f in cube_files]
+
+# Load cube PNGs for each split
+train_cubes = load_cubes(SOURCE_CUBES_DIR)
+if os.path.isdir(VAL_SOURCE_CUBES_DIR):
+    val_cubes = load_cubes(VAL_SOURCE_CUBES_DIR)
+else:
+    val_cubes = train_cubes
+    print(f"Validation cube folder not found ({VAL_SOURCE_CUBES_DIR}); using training cubes for val split.")
 
 def generate_background():
     bg_path = random.choice(bg_files)
@@ -70,14 +81,16 @@ def generate_background():
     return Image.fromarray(transformed['image']).convert("RGBA")
 
 # --- START GENERATION ---
-loop_cntr = 0
 for i in tqdm(range(NUM_IMAGES_TO_GENERATE)):
+    split = 'train' if i < int(0.8 * NUM_IMAGES_TO_GENERATE) else 'val'
+    cubes_for_split = train_cubes if split == 'train' else val_cubes
+
     bg = generate_background()
     labels = []
     
     num_cubes = random.randint(0, 4) # Random number of cubes per image
     for _ in range(num_cubes):
-        cube = random.choice(cubes).copy()
+        cube = random.choice(cubes_for_split).copy()
         
         # Random Transformations
         scale = random.uniform(0.8, 1.2) 
@@ -130,13 +143,6 @@ for i in tqdm(range(NUM_IMAGES_TO_GENERATE)):
     # Apply global sensor noise and blur to EVERYTHING
     final_aug = global_transform(image=final_composite_np)
     final_img = Image.fromarray(final_aug['image'])
-
-    if loop_cntr < int(0.8 * NUM_IMAGES_TO_GENERATE):
-        split = 'train'
-    else:
-        split = 'val'
-    loop_cntr += 1
-
 
     # Define dynamic paths
     img_path = os.path.join(DATASET_ROOT,'images', split, f"synth_{i}.jpg")
